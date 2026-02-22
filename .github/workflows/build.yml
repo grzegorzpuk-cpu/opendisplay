@@ -1,0 +1,74 @@
+name: Build opendisplay firmware
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build [${{ matrix.environment }}]
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - nrf52840custom
+          - esp32-s3-N16R8
+          - esp32-s3-N8R8
+          - esp32-s3-N32R8
+          - esp32-c3-N4
+          - esp32-c6-N4
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO toolchains & libraries
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.environment }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ matrix.environment }}-
+            pio-
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build ${{ matrix.environment }}
+        run: pio run -e ${{ matrix.environment }}
+
+      - name: Collect firmware binaries
+        run: |
+          mkdir -p firmware
+          # Sciezki roznia sie miedzy platformami
+          find .pio/build/${{ matrix.environment }}/ \
+            -maxdepth 1 \
+            -type f \( -name "firmware.bin" -o -name "firmware.hex" \
+                      -o -name "firmware.uf2" -o -name "zephyr.bin" \) \
+            -exec cp {} firmware/ \; 2>/dev/null || true
+
+          # Tez szukamy merged binary dla ESP32-S3
+          find .pio/build/${{ matrix.environment }}/ \
+            -maxdepth 1 -name "*.bin" \
+            -exec cp {} firmware/ \; 2>/dev/null || true
+
+          echo "=== Firmware dla ${{ matrix.environment }} ==="
+          ls -lh firmware/ || echo "(brak plikow binarnych)"
+
+      - name: Upload firmware → GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: opendisplay-${{ matrix.environment }}-build${{ github.run_number }}
+          path: firmware/
+          retention-days: 30
+          if-no-files-found: warn
